@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<project name="optionscity_bundle" default="all">
+    <property environment="env"/>
+    <property file="project.properties" />
+
+    <target name="all" depends="clean, init, retrieveApiJars, compile, packageWidget, packageCommon, packageBundle"/>
+
+    <target name="clean">
+        <delete dir="${basedir}/build/common"/>
+        <delete dir="${basedir}/build/widget"/>
+        <delete dir="${basedir}/build/algo"/>
+        <delete dir="${basedir}/artifacts"/>
+    </target>
+
+    <target name="init">
+        <mkdir dir="${basedir}/build/common"/>
+        <mkdir dir="${basedir}/build/widget"/>
+        <mkdir dir="${basedir}/build/algo"/>
+        <mkdir dir="${basedir}/artifacts"/>
+        <mkdir dir="${basedir}/artifacts/common"/>
+        <mkdir dir="${basedir}/artifacts/widget"/>
+        <mkdir dir="${basedir}/algo"/>
+        <mkdir dir="${basedir}/common"/>
+        <mkdir dir="${basedir}/widgets"/>
+        <mkdir dir="${basedir}/libs"/>
+        <mkdir dir="${basedir}/libs/system"/>
+        <mkdir dir="${basedir}/libs/app"/>
+        <mkdir dir="${basedir}/resources"/>
+        <mkdir dir="${basedir}/resources/dashboards"/>
+        <mkdir dir="${basedir}/resources/icon"/>
+    </target>
+
+    <target name="retrieveApiJars">
+        <mkdir dir="${basedir}/libs/system/${TARGET_OC_VERSION}"/>
+        <get src="http://utilities.optionscity.com/files/freeway/${TARGET_OC_VERSION}/freeway-${TARGET_OC_VERSION}.jar"
+             dest="${basedir}/libs/system/${TARGET_OC_VERSION}/freeway-${TARGET_OC_VERSION}.jar" usetimestamp="true"/>
+        <get src="http://utilities.optionscity.com/files/widgets/${TARGET_OC_VERSION}/widgets-${TARGET_OC_VERSION}.jar"
+             dest="${basedir}/libs/system/${TARGET_OC_VERSION}/widgets-${TARGET_OC_VERSION}.jar" usetimestamp="true"/>
+    </target>
+
+    <target name="compile" depends="init">
+        <javac nowarn="on" fork="false" srcdir="${basedir}/common" destdir="${basedir}/build/common" debug="true" optimize="on" includeantruntime="false" >
+            <compilerarg value="-Xlint:all"/>
+            <classpath>
+                <fileset dir="${basedir}/libs/system/${TARGET_OC_VERSION}">
+                    <include name="freeway-${TARGET_OC_VERSION}.jar"/>
+                    <include name="widgets-${TARGET_OC_VERSION}.jar"/>
+                </fileset>
+
+                <fileset dir="${basedir}/libs/app">
+                    <include name="*.jar"/>
+                </fileset>
+            </classpath>
+        </javac>
+
+        <javac nowarn="on" fork="true" srcdir="${basedir}/widgets" destdir="${basedir}/build/widget" memoryInitialSize="512m" memorymaximumsize="768m" debug="true" optimize="on" includeantruntime="false" >
+            <compilerarg value="-Xlint:all"/>
+            <classpath>
+                <fileset dir="${basedir}/libs/system/${TARGET_OC_VERSION}">
+                    <include name="freeway-${TARGET_OC_VERSION}.jar"/>
+                    <include name="widgets-${TARGET_OC_VERSION}.jar"/>
+                </fileset>
+
+                <fileset dir="${basedir}/libs/app">
+                    <include name="*.jar"/>
+                </fileset>
+
+                <pathelement location="${basedir}/build/common"/>
+            </classpath>
+        </javac>
+
+        <javac nowarn="on" fork="true" srcdir="${basedir}/algo" destdir="${basedir}/build/algo" memoryInitialSize="512m" memorymaximumsize="768m" debug="true" optimize="on" includeantruntime="false" >
+            <compilerarg value="-Xlint:all"/>
+            <classpath>
+                <fileset dir="${basedir}/libs/system/${TARGET_OC_VERSION}">
+                    <include name="freeway-${TARGET_OC_VERSION}.jar"/>
+                    <include name="widgets-${TARGET_OC_VERSION}.jar"/>
+                </fileset>
+
+                <fileset dir="${basedir}/libs/app">
+                    <include name="*.jar"/>
+                </fileset>
+
+                <pathelement location="${basedir}/build/common"/>
+            </classpath>
+        </javac>
+    </target>
+
+    <target name="packageCommon">
+        <jar destfile="${basedir}/artifacts/common/common.${BUNDLE_NAME}.jar">
+            <fileset dir="${basedir}/build/common" includes="**/*.class"/>
+        </jar>
+    </target>
+
+    <target name="packageWidget">
+        <jar destfile="${basedir}/artifacts/widget/widgets.${BUNDLE_NAME}.jar">
+            <fileset dir="${basedir}/build/widget" includes="**/*.class"/>
+            <fileset dir="${basedir}/widgets/" includes="META-INF/**"/>
+            <fileset dir="${basedir}/resources/icon/" includes="*"/>
+        </jar>
+    </target>
+
+    <target name="packageBundle">
+        <jar destfile="${basedir}/artifacts/bundle.${BUNDLE_NAME}.jar">
+            <fileset dir="${basedir}/artifacts/common" includes="common.${BUNDLE_NAME}.jar"/>
+            <fileset dir="${basedir}/artifacts/widget" includes="widgets.${BUNDLE_NAME}.jar"/>
+            <fileset dir="${basedir}/build/algo" includes="*.class"/>
+            <fileset dir="${basedir}/resources/dashboards" includes="*.dashboard"/>
+            <fileset dir="${basedir}/resources/setup" includes="default.setup"/>
+        </jar>
+    </target>
+
+    <target name="propsTest">
+        <echo>Bundle name is ${BUNDLE_NAME}</echo>
+    </target>
+
+</project>
