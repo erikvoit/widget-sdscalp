@@ -1,3 +1,6 @@
 instances:SDScalp=1
 variable:SDScalp.1.autostart=true
 variable:SDScalp.1.testmode=false
+instances:MdToCsv=1
+variable:MdToCsv.1.autostart=true
+variable:MdToCsv.1.testmode=false
