@@ -43,13 +43,32 @@ public class MdToCsv extends AbstractJob {
     }
 
     public void onBookDepth(BookDepthMessage m) {
+        // StringBuilder to build CSV format book depth
+        // to be used for time series creation
+        StringBuilder sb = new StringBuilder();
         log("~~New BookDepth Msg~~");
-        log("The instrument id is " + m.instrumentId);
+        sb.append("B,");
+        sb.append(System.currentTimeMillis());
+        sb.append(",");
+        sb.append(m.instrumentId);
+        sb.append(",");
+        sb.append(depthLevels);
+        sb.append(",");
         Book book = instruments().getBook(m.instrumentId);
         for (int i=0; i < depthLevels; i++){
-            //log(B,);
-            log("Bid Level " + (i+1) + " is " + book.bid[i].price + " quanity is " + book.bid[i].quantity);
-            log("Ask Level " + (i+1) + " is " + book.ask[i].price + " quanity is " + book.ask[i].quantity);
+            sb.append(book.bid[i].price);
+            sb.append(",");
+            sb.append(book.bid[i].quantity);
+            sb.append(",");
         }
+        sb.append(depthLevels);
+        for (int i=0; i < depthLevels; i++){
+            sb.append(",");
+            sb.append(book.ask[i].price);
+            sb.append(",");
+            sb.append(book.ask[i].quantity);
+        }
+        String csvFormat = sb.toString();
+        log(""+csvFormat);
     }
 }
