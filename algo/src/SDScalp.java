@@ -1,5 +1,6 @@
 import com.optionscity.freeway.api.*;
 import common.sdscalp.StandardDeviation;
+import common.sdscalp.TASignal;
 import org.jquantlib.math.statistics.GeneralStatistics;
 
 /**
@@ -19,9 +20,14 @@ public class SDScalp extends AbstractJob {
     @Override
     public void begin(IContainer container) {
         super.begin(container);
+        container.subscribeToSignals();
 
         fiveMinuteStdDiv = new StandardDeviation();
         fiveMinuteStdDiv.addSequence(fiveMinPriceArrayTestES);
         log("The Standard deviation calculated by my extended class is " + fiveMinuteStdDiv.standardDeviation());
+
+    }
+    public void onSignal(TASignal signal) {
+        log("Received a signal from "+signal.sender+" with message: "+signal.message);
     }
 }

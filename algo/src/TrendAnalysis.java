@@ -1,6 +1,7 @@
 import com.optionscity.freeway.api.AbstractJob;
 import com.optionscity.freeway.api.IContainer;
 import com.optionscity.freeway.api.IJobSetup;
+import common.sdscalp.TASignal;
 import eu.verdelhan.ta4j.Tick;
 import eu.verdelhan.ta4j.TimeSeries;
 import eu.verdelhan.ta4j.indicators.simple.ClosePriceIndicator;
@@ -27,6 +28,11 @@ public class TrendAnalysis extends AbstractJob {
     CSVReader reader;
     List<String[]> dayBars;
 
+    //adding Class variables to demo signaling onTimer
+    //TODO make signal more robust and useful
+    String fastSMA="";
+    String slowSMA="";
+
     private static final String FILEPATH = "./jobfiles/";
     String dailyBars = "";
 
@@ -46,14 +52,24 @@ public class TrendAnalysis extends AbstractJob {
         // Getting the simple moving average (SMA) of the close price over the last 5 ticks
         SMAIndicator shortSma = new SMAIndicator(closePrice, 5);
         log("The 5 day SMA is " + shortSma.getValue(esDailyBars.getTickCount()-1));
+
+        // DEMO INTER JOB SIGNALING
+        // Sending our results to  SDScalp job as strings to demo inter-job signaling in Freeway
+        // TODO send the time series itself to another job for order execution
+        fastSMA=shortSma.getValue(esDailyBars.getTickCount()-1).toString();
+
         // Getting the Simple moving average (SMA) over the last 200 ticks
         SMAIndicator twoHundredDaySma = new SMAIndicator(closePrice, 200);
         log("The 200 day SMA is " + twoHundredDaySma.getValue(esDailyBars.getTickCount()-1));
+        // Sending 200 day SMA to listener job
+        slowSMA=twoHundredDaySma.getValue(esDailyBars.getTickCount()-1).toString();
     }
 
     public TimeSeries loadDayBars() {
+        // Create list of ticks
         List<Tick> ticks = new ArrayList<>();
 
+        // read csv file to ticks
         try{
             reader = new CSVReader(new FileReader(FILEPATH+dailyBars));
         } catch (FileNotFoundException e) {
@@ -79,6 +95,7 @@ public class TrendAnalysis extends AbstractJob {
             // add tick to ticks Array list for time series creation
             ticks.add(new Tick(barDate, openPrice, highPrice, lowPrice,closePrice, volume ));
 
+            // log out the ticks we are adding
             StringBuilder sb = new StringBuilder();
             sb.append(bar[0]);
             sb.append(",");
@@ -96,6 +113,10 @@ public class TrendAnalysis extends AbstractJob {
         }
         // return a time series from daily bars imported from CSV :)
         return new TimeSeries("ES Continuous Day Bars", ticks);
+    }
+    public void onTimer() {
+        container.signal(new TASignal(fastSMA));
+        container.signal(new TASignal(slowSMA));
     }
 
 }
