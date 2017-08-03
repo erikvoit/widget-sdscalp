@@ -5,6 +5,7 @@ import com.optionscity.freeway.api.Prices;
 import com.optionscity.freeway.api.helpers.TimeInterval;
 import com.optionscity.freeway.api.messages.MarketBidAskMessage;
 import com.optionscity.freeway.api.messages.MarketLastMessage;
+import common.sdscalp.TickSignal;
 import eu.verdelhan.ta4j.Tick;
 import eu.verdelhan.ta4j.TimeSeries;
 import org.joda.time.DateTime;
@@ -56,7 +57,7 @@ public class MdToTicks extends AbstractJob {
     public void begin(IContainer container) {
         super.begin(container);
         //get instrumentId to create live ticks for
-        instrumentId =container.getVariable("Instrument");
+        instrumentId=container.getVariable("Instrument");
         //determine if we will use last prices and/or market bid offer to create ticks
         useLast=getBooleanVar("useLast");
         useTop=getBooleanVar("useTop");
@@ -78,6 +79,7 @@ public class MdToTicks extends AbstractJob {
         //TODO implement onBarTimer let's just get this working with built in timer for now...
         onBarTimer(marketOpenTime, barTimer);
     }
+
     // Use onTimer to push bars for now...
     public void onTimer(){
         // TODO improve last/mid-market logic on closePrice.
@@ -86,6 +88,9 @@ public class MdToTicks extends AbstractJob {
             closePrice=instruments().getMarketPrices(instrumentId).last;
         }
         Tick newTick = new Tick(DateTime.now(), openPrice, highPrice, lowPrice, closePrice, volume);
+        // send tick to all interested listeners...
+        container.signal(new TickSignal(newTick));
+        // add to local time series too for now...
         series.addTick(newTick);
         // log tick so we can see something is happening
         log("~~New Tick Recorded to Time Series~~");
@@ -97,7 +102,7 @@ public class MdToTicks extends AbstractJob {
         lowPrice = closePrice;
     }
 
-    //TODO implement event handlers
+    //TODO improve event handlers to consider bid ask when configured
     public void onMarketLast(MarketLastMessage m) {
         volume += m.quantity;
         if (useLast) {
