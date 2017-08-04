@@ -2,7 +2,10 @@ import com.optionscity.freeway.api.*;
 import com.optionscity.freeway.api.helpers.TimeInterval;
 import common.sdscalp.StandardDeviation;
 import common.sdscalp.TASignal;
+import common.sdscalp.TickCoalescer;
 import common.sdscalp.TickSignal;
+import eu.verdelhan.ta4j.Decimal;
+import eu.verdelhan.ta4j.Tick;
 import eu.verdelhan.ta4j.TimeSeries;
 import eu.verdelhan.ta4j.indicators.simple.ClosePriceIndicator;
 import eu.verdelhan.ta4j.indicators.simple.TypicalPriceIndicator;
@@ -12,8 +15,11 @@ import eu.verdelhan.ta4j.indicators.trackers.SMAIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.bollinger.BollingerBandsLowerIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.bollinger.BollingerBandsMiddleIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.bollinger.BollingerBandsUpperIndicator;
+import org.joda.time.DateTime;
 import org.joda.time.Period;
 import org.jquantlib.math.statistics.GeneralStatistics;
+
+import java.util.*;
 
 /**
  * Created by evoit on 7/31/2017.
@@ -28,6 +34,8 @@ public class SDScalp extends AbstractJob {
     TimeSeries tenSecondES;
     TimeSeries thirtySecondES;
     TimeSeries fiveMinuteES;
+    // list of ticks to coalesce time frames
+    List<Tick> ticks = new ArrayList<>();
     //use (Max+Min+Close)/3
     TypicalPriceIndicator typicalFast;
     TypicalPriceIndicator typicalMid;
@@ -71,6 +79,7 @@ public class SDScalp extends AbstractJob {
         // initialize the time series
         loadTimeSeries();
         loadIndicators();
+
     }
     public void onTimer(){
         //log out the moving averages for now
@@ -79,30 +88,51 @@ public class SDScalp extends AbstractJob {
         log("The five minute fast SMA is "+fiveMinuteFastSMA.getValue(tenSecondES.getTickCount()-1).toString());
         log("The ten minute fast SMA is "+tenMinuteFastSMA.getValue(tenSecondES.getTickCount()-1).toString());
         // a mid to confirm to confirm time series is working
-        log("The five minute mid SMA is "+fiveMinuteMidSMA.getValue(thirtySecondES.getTickCount()-1).toString());
+        if(thirtySecondES.getTickCount() > 0) {
+            log("The five minute mid SMA is "+fiveMinuteMidSMA.getValue(thirtySecondES.getTickCount()-1).toString());
+        }
         log("The middle BBand is "+middleBBand.getValue(tenSecondES.getTickCount()-1).toString());
         log("The low BBand is "+lowBBand.getValue(tenSecondES.getTickCount()-1).toString());
         log("The High BBand is "+upBBand.getValue(tenSecondES.getTickCount()-1).toString());
+        log("There are "+ Integer.toString(tenSecondES.getTickCount())+" ticks in the ten second time series");
+        log("There low in the current 10 second tick is "+ tenSecondES.getLastTick().getMinPrice());
+        log("There high in the current 10 second tick is "+ tenSecondES.getLastTick().getMaxPrice());
+        log("There are "+ Integer.toString(thirtySecondES.getTickCount())+" ticks in the thirty second time series");
+        if(thirtySecondES.getTickCount() > 0) {
+            log("There low in the current 30 second tick is "+ thirtySecondES.getLastTick().getMinPrice());
+            log("There high in the current 30 second tick is "+ thirtySecondES.getLastTick().getMaxPrice());
+        }
+
+        log("There are "+ Integer.toString(fiveMinuteES.getTickCount())+" ticks in the five minute time series");
     }
+
     public void onSignal(TASignal signal) {
         log("Received a signal from "+signal.sender+" with message: "+signal.message);
     }
     // add ticks to time series
     public void onSignal(TickSignal signal) {
-        log("Received new tick from "+signal.sender+" open: "+signal.tick.getOpenPrice()+" high: "+signal.tick.getMaxPrice()+" low: "+signal.tick.getMinPrice()+" close: "+signal.tick.getClosePrice()+" volume: "+signal.tick.getVolume());
-        tenSecondES.addTick(signal.tick);
-        thirtySecondES.addTick(signal.tick);
-        fiveMinuteES.addTick(signal.tick);
+        if (signal.sender.equals("MdToTicks.1")){
+            log("Received new tick from "+signal.sender+" open: "+signal.tick.getOpenPrice()+" high: "+signal.tick.getMaxPrice()+" low: "+signal.tick.getMinPrice()+" close: "+signal.tick.getClosePrice()+" volume: "+signal.tick.getVolume());
+            ticks.add(signal.tick);
+            tenSecondES.addTick(signal.tick);
+        }
+        if (signal.sender.equals("MdToTicks.2")){
+            log("Received new tick from "+signal.sender+" open: "+signal.tick.getOpenPrice()+" high: "+signal.tick.getMaxPrice()+" low: "+signal.tick.getMinPrice()+" close: "+signal.tick.getClosePrice()+" volume: "+signal.tick.getVolume());
+            thirtySecondES.addTick(signal.tick);
+        }
+        if (signal.sender.equals("MdToTicks.3")) {
+            fiveMinuteES.addTick(signal.tick);
+        }
     }
     public void loadTimeSeries(){
         // create fast series
-        tenSecondES = new TimeSeries("my_live_series", Period.seconds(10));
+        tenSecondES = new TimeSeries("my_fast_series", Period.seconds(10));
         tenSecondES.setMaximumTickCount(MAX_TICK_COUNT);
         // create middle series
-        thirtySecondES = new TimeSeries("my_live_series", Period.minutes(1));
+        thirtySecondES = new TimeSeries("my_mid_series", Period.seconds(30));
         thirtySecondES.setMaximumTickCount(MAX_TICK_COUNT);
         // create slow series
-        fiveMinuteES = new TimeSeries("my_live_series", Period.minutes(5));
+        fiveMinuteES = new TimeSeries("my_slow_series", Period.minutes(5));
         fiveMinuteES.setMaximumTickCount(MAX_TICK_COUNT);
     }
     private void loadIndicators(){
