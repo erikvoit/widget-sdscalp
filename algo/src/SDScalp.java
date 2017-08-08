@@ -1,13 +1,9 @@
 import com.optionscity.freeway.api.*;
-import com.optionscity.freeway.api.helpers.TimeInterval;
 import common.sdscalp.StandardDeviation;
 import common.sdscalp.TASignal;
-import common.sdscalp.TickCoalescer;
 import common.sdscalp.TickSignal;
-import eu.verdelhan.ta4j.Decimal;
 import eu.verdelhan.ta4j.Tick;
 import eu.verdelhan.ta4j.TimeSeries;
-import eu.verdelhan.ta4j.indicators.simple.ClosePriceIndicator;
 import eu.verdelhan.ta4j.indicators.simple.TypicalPriceIndicator;
 import eu.verdelhan.ta4j.indicators.statistics.StandardDeviationIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.EMAIndicator;
@@ -15,7 +11,6 @@ import eu.verdelhan.ta4j.indicators.trackers.SMAIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.bollinger.BollingerBandsLowerIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.bollinger.BollingerBandsMiddleIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.bollinger.BollingerBandsUpperIndicator;
-import org.joda.time.DateTime;
 import org.joda.time.Period;
 import org.jquantlib.math.statistics.GeneralStatistics;
 
@@ -26,40 +21,27 @@ import java.util.*;
  */
 public class SDScalp extends AbstractJob {
     // variables
-    final double[] fiveMinPriceArrayTestES = {2469.50, 2468.25, 2467.50, 2465.25, 2467.25, 2465.25, 2463.75, 2461.25, 2460.00, 2462.25, 2464.25, 2465.50, 2467.25, 2468.25, 2469.50, 2472.50, 2474.50, 2474.75, 2476.25, 2478.75};
-    GeneralStatistics fiveMinPrices;
-    StandardDeviation fiveMinuteStdDiv;
+    boolean indicatorsLoaded=false;
 
     // ta4lib time series and data structures
-    TimeSeries tenSecondES;
-    TimeSeries thirtySecondES;
-    TimeSeries fiveMinuteES;
+    TimeSeries oneMinuteES;
+    TimeSeries tenMinuteES;
     // list of ticks to coalesce time frames
     List<Tick> ticks = new ArrayList<>();
     //use (Max+Min+Close)/3
     TypicalPriceIndicator typicalFast;
     TypicalPriceIndicator typicalMid;
-    TypicalPriceIndicator typicalSlow;
-    //fast
-    SMAIndicator thirtySecondFastSMA;
-    SMAIndicator oneMinuteFastSMA;
-    SMAIndicator fiveMinuteFastSMA;
-    SMAIndicator tenMinuteFastSMA;
-    //Mid
-    SMAIndicator fiveMinuteMidSMA;
-    SMAIndicator tenMinuteMidSMA;
-    SMAIndicator thirtyMinuteMidSMA;
-    //slow
-    SMAIndicator fifteenMinuteSlowSMA;
-    SMAIndicator thirtyMinuteSlowSMA;
-    SMAIndicator sixtyMinuteSlowSMA;
+    //Fast
+    SMAIndicator thirtyMinuteFastSMA;
+    //Slow
+    SMAIndicator sixtyMinuteFastSMA;
+
     // BB stuff
-    EMAIndicator avgFast12;
-    StandardDeviationIndicator sdFast12;
+    EMAIndicator avgMid12;
+    StandardDeviationIndicator sdMid12;
     BollingerBandsMiddleIndicator middleBBand;
     BollingerBandsLowerIndicator lowBBand;
     BollingerBandsUpperIndicator upBBand;
-
     // Constants
     private int MAX_TICK_COUNT = 1000;
 
@@ -72,38 +54,26 @@ public class SDScalp extends AbstractJob {
     public void begin(IContainer container) {
         super.begin(container);
         container.subscribeToSignals();
-
-        fiveMinuteStdDiv = new StandardDeviation();
-        fiveMinuteStdDiv.addSequence(fiveMinPriceArrayTestES);
-        log("The Standard deviation calculated by my extended class is " + fiveMinuteStdDiv.standardDeviation());
         // initialize the time series
         loadTimeSeries();
-        loadIndicators();
-
     }
     public void onTimer(){
+        if(!indicatorsLoaded){
+            loadIndicators();
+        }
         //log out the moving averages for now
-        log("The thirty second fast SMA is "+thirtySecondFastSMA.getValue(tenSecondES.getTickCount()-1).toString());
-        log("The one minute fast SMA is "+oneMinuteFastSMA.getValue(tenSecondES.getTickCount()-1).toString());
-        log("The five minute fast SMA is "+fiveMinuteFastSMA.getValue(tenSecondES.getTickCount()-1).toString());
-        log("The ten minute fast SMA is "+tenMinuteFastSMA.getValue(tenSecondES.getTickCount()-1).toString());
-        // a mid to confirm to confirm time series is working
-        if(thirtySecondES.getTickCount() > 0) {
-            log("The five minute mid SMA is "+fiveMinuteMidSMA.getValue(thirtySecondES.getTickCount()-1).toString());
+        if(oneMinuteES.getTickCount() > 0) {
+            log("The thirty minute fast SMA is "+ thirtyMinuteFastSMA.getValue(oneMinuteES.getTickCount()-1).toString());
+            log("The low in the current one minute tick is "+ oneMinuteES.getLastTick().getMinPrice());
+            log("The high in the current one minute tick is "+ oneMinuteES.getLastTick().getMaxPrice());
         }
-        log("The middle BBand is "+middleBBand.getValue(tenSecondES.getTickCount()-1).toString());
-        log("The low BBand is "+lowBBand.getValue(tenSecondES.getTickCount()-1).toString());
-        log("The High BBand is "+upBBand.getValue(tenSecondES.getTickCount()-1).toString());
-        log("There are "+ Integer.toString(tenSecondES.getTickCount())+" ticks in the ten second time series");
-        log("There low in the current 10 second tick is "+ tenSecondES.getLastTick().getMinPrice());
-        log("There high in the current 10 second tick is "+ tenSecondES.getLastTick().getMaxPrice());
-        log("There are "+ Integer.toString(thirtySecondES.getTickCount())+" ticks in the thirty second time series");
-        if(thirtySecondES.getTickCount() > 0) {
-            log("There low in the current 30 second tick is "+ thirtySecondES.getLastTick().getMinPrice());
-            log("There high in the current 30 second tick is "+ thirtySecondES.getLastTick().getMaxPrice());
+        if(tenMinuteES.getTickCount() > 0) {
+            log("The low BBand is "+lowBBand.getValue(tenMinuteES.getTickCount()-1).toString());
+            log("The middle BBand is "+middleBBand.getValue(tenMinuteES.getTickCount()-1).toString());
+            log("The High BBand is "+upBBand.getValue(tenMinuteES.getTickCount()-1).toString());
+            log("The low in the current ten minute tick is "+ tenMinuteES.getLastTick().getMinPrice());
+            log("The high in the current ten minute tick is "+ tenMinuteES.getLastTick().getMaxPrice());
         }
-
-        log("There are "+ Integer.toString(fiveMinuteES.getTickCount())+" ticks in the five minute time series");
     }
 
     public void onSignal(TASignal signal) {
@@ -114,46 +84,39 @@ public class SDScalp extends AbstractJob {
         if (signal.sender.equals("MdToTicks.1")){
             log("Received new tick from "+signal.sender+" open: "+signal.tick.getOpenPrice()+" high: "+signal.tick.getMaxPrice()+" low: "+signal.tick.getMinPrice()+" close: "+signal.tick.getClosePrice()+" volume: "+signal.tick.getVolume());
             ticks.add(signal.tick);
-            tenSecondES.addTick(signal.tick);
+            oneMinuteES.addTick(signal.tick);
         }
         if (signal.sender.equals("MdToTicks.2")){
             log("Received new tick from "+signal.sender+" open: "+signal.tick.getOpenPrice()+" high: "+signal.tick.getMaxPrice()+" low: "+signal.tick.getMinPrice()+" close: "+signal.tick.getClosePrice()+" volume: "+signal.tick.getVolume());
-            thirtySecondES.addTick(signal.tick);
-        }
-        if (signal.sender.equals("MdToTicks.3")) {
-            fiveMinuteES.addTick(signal.tick);
+            tenMinuteES.addTick(signal.tick);
         }
     }
     public void loadTimeSeries(){
         // create fast series
-        tenSecondES = new TimeSeries("my_fast_series", Period.seconds(10));
-        tenSecondES.setMaximumTickCount(MAX_TICK_COUNT);
+        oneMinuteES = new TimeSeries("my_fast_series", Period.minutes(1));
+        oneMinuteES.setMaximumTickCount(MAX_TICK_COUNT);
         // create middle series
-        thirtySecondES = new TimeSeries("my_mid_series", Period.seconds(30));
-        thirtySecondES.setMaximumTickCount(MAX_TICK_COUNT);
-        // create slow series
-        fiveMinuteES = new TimeSeries("my_slow_series", Period.minutes(5));
-        fiveMinuteES.setMaximumTickCount(MAX_TICK_COUNT);
+        tenMinuteES = new TimeSeries("my_mid_series", Period.minutes(10));
+        tenMinuteES.setMaximumTickCount(MAX_TICK_COUNT);
     }
     private void loadIndicators(){
-        //get average price of time series bar
-        typicalFast = new TypicalPriceIndicator(tenSecondES);
-        typicalMid = new TypicalPriceIndicator(thirtySecondES);
-        typicalSlow = new TypicalPriceIndicator(fiveMinuteES);
+        if(oneMinuteES.getTickCount() > 0) {
+            //get average price of time series bar
+            typicalFast = new TypicalPriceIndicator(oneMinuteES);
+            typicalMid = new TypicalPriceIndicator(tenMinuteES);
 
-        // create indicators using average price of bars AKA typicalPrice in qa4j
-        thirtySecondFastSMA = new SMAIndicator(typicalFast, 3);
-        oneMinuteFastSMA = new SMAIndicator(typicalFast, 6);
-        fiveMinuteFastSMA = new SMAIndicator(typicalFast, 30);
-        tenMinuteFastSMA = new SMAIndicator(typicalFast, 60);
-        // a mid to confirm one ticker plant can service all time series hopefully
-        fiveMinuteMidSMA = new SMAIndicator(typicalMid, 10);
+            // create indicators using average price of bars AKA typicalPrice in qa4j
+            thirtyMinuteFastSMA = new SMAIndicator(typicalFast, 30);
+            sixtyMinuteFastSMA = new SMAIndicator(typicalFast, 60);
 
-        // Bollinger bands stuff
-        avgFast12 = new EMAIndicator(typicalFast, 12);
-        sdFast12 = new StandardDeviationIndicator(typicalFast, 12);
-        middleBBand = new BollingerBandsMiddleIndicator(avgFast12);
-        lowBBand = new BollingerBandsLowerIndicator(middleBBand, sdFast12);
-        upBBand = new BollingerBandsUpperIndicator(middleBBand, sdFast12);
+            // Bollinger bands stuff
+            avgMid12 = new EMAIndicator(typicalMid, 12);
+            sdMid12 = new StandardDeviationIndicator(typicalMid, 12);
+            middleBBand = new BollingerBandsMiddleIndicator(avgMid12);
+            lowBBand = new BollingerBandsLowerIndicator(middleBBand, sdMid12);
+            upBBand = new BollingerBandsUpperIndicator(middleBBand, sdMid12);
+
+            indicatorsLoaded=true;
+        }
     }
 }
