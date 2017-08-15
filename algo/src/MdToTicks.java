@@ -8,7 +8,7 @@ import eu.verdelhan.ta4j.TimeSeries;
 import org.joda.time.DateTime;
 import org.joda.time.Instant;
 import org.joda.time.LocalTime;
-import org.joda.time.Period;
+
 
 /**
  * Created by evoit on 8/1/2017.
@@ -20,7 +20,6 @@ import org.joda.time.Period;
  *
  * TODO backup ticks to file / Send all available ticks to interested listeners to prime technical indicators.
  * TODO consider configuring all time frames in single MDtoTicks ticker plant.
- * TODO improve event handlers to consider bid ask when configured
  *
  */
 
@@ -31,6 +30,7 @@ public class MdToTicks extends AbstractJob {
     private boolean useLast;
     private boolean useTop;
     private int barTimer=60;
+    IDB tickDB;
 
     // tick component values
     private double openPrice = Double.NaN;
@@ -44,12 +44,13 @@ public class MdToTicks extends AbstractJob {
     private String endTime;
 
     // Constants
-    private TimeInterval timeInterval;
     private int MAX_TICK_COUNT = 1000;
+    private TimeInterval timeInterval;
 
     @Override
     public void install(IJobSetup setup) {
         setup.addVariable("Instrument", "Instrument to process live tick data for", "instrumentId", "ES-20170915-F");
+        setup.addVariable("Database", "Name of IDB database to store ticks to", "String", "tickDB");
         setup.addVariable("Start Time", "Time after which the job can run; in hh:mm (in server time zone)", "String", "");
         setup.addVariable("End Time", "Time after which job stops; in hh:mm (in server time zone)", "String", "");
         setup.addVariable("Market Open Time", "Round first interval to this time in hh:mm", "String", "17:00");
@@ -81,15 +82,17 @@ public class MdToTicks extends AbstractJob {
             closePrice=instruments().getMarketPrices(instrumentId).last;
         }
         // create Tick
-        Tick newTick = new Tick(DateTime.now(), openPrice, highPrice, lowPrice, closePrice, volume);
+        Tick newTick = createTick();
         // send tick to all interested listeners...
         container.signal(new TickSignal(newTick));
-        //TODO Backup tick to file and perhaps send time series to all interested parties.
-        // add to local time series too for now...
+        //backup Time Series to a DB
         series.addTick(newTick);
+        tickDB.put("lastTicks", series);
+
         // log tick so we can see something is happening
         log("~~New Tick Recorded to Time Series~~");
         log("Tick end Time "+series.getLastTick().getEndTime()+" close price "+series.getLastTick().getClosePrice());
+        // reset Tick variables for next tick
         resetTick();
     }
     /**
@@ -118,9 +121,19 @@ public class MdToTicks extends AbstractJob {
             }
         }
     }
-    //TODO add top of book updates to Tick
     public void onMarketBidAsk(MarketBidAskMessage m) {
-
+        // If considering top of book updates in tick high low
+        if (useTop){
+            Prices topOfBook = instruments().getTopOfBook(m.instrumentId);
+            if (topOfBook.ask_size != 0 && topOfBook.ask < lowPrice){
+                lowPrice = instruments().getTopOfBook(m.instrumentId).ask;
+                log("New low price in tick from top of book"+ topOfBook.ask);
+            }
+            if (topOfBook.bid_size != 0 && topOfBook.bid > highPrice){
+                highPrice = instruments().getTopOfBook(m.instrumentId).bid;
+                log("New high price in tick from top of book"+ topOfBook.bid);
+            }
+        }
     }
     /**
      * Loads the 'Start time' and 'End time' configuration and validates the input.
@@ -142,6 +155,8 @@ public class MdToTicks extends AbstractJob {
      */
     private void initializeTickerPlant(){
         instrumentId=container.getVariable("Instrument");
+        // assign job configured variable name to Database
+        tickDB=container.getDB(container.getVariable("Database"));
         //determine if we will use last prices and/or market bid offer to create ticks
         useLast=getBooleanVar("useLast");
         useTop=getBooleanVar("useTop");
@@ -159,7 +174,7 @@ public class MdToTicks extends AbstractJob {
      * Create a moving time series
      */
     public void loadTimeSeries(){
-        series = new TimeSeries("my_live_series", Period.seconds(barTimer));
+        series = new TimeSeries("my_live_series");
         series.setMaximumTickCount(MAX_TICK_COUNT);
 
         if (series == null) {
@@ -171,8 +186,8 @@ public class MdToTicks extends AbstractJob {
     /**
      * all this does for now is initialize the first tick...
      */
+    //TODO whenever job starts first tick is rounded to nearest interval.  all sequential ticks are length of timeFrame
     private void onBarTimer(LocalTime MarketOpen, int timeFrame) {
-        //TODO whenever job starts first tick is rounded to nearest interval.  all sequential ticks are length of timeFrame
         if (Double.isNaN(openPrice)){
             log("Starting first bar...");
             // mark instant first bar is started
@@ -185,6 +200,14 @@ public class MdToTicks extends AbstractJob {
             lowPrice=openPrice;
             closePrice=openPrice;
         }
+    }
+    /**
+     * returns a tick object
+     */
+    private Tick createTick(){
+        // create a tick;
+        Tick newTick = new Tick(DateTime.now(), openPrice, highPrice, lowPrice, closePrice, volume);
+        return newTick;
     }
     /**
      * resets tick variables for next tick

@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="ta4j-0.8.1">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/libs/app/ta4j-0.8.1.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

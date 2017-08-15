@@ -2,9 +2,11 @@ import com.optionscity.freeway.api.*;
 import common.sdscalp.StandardDeviation;
 import common.sdscalp.TASignal;
 import common.sdscalp.TickSignal;
+import eu.verdelhan.ta4j.Decimal;
 import eu.verdelhan.ta4j.Tick;
 import eu.verdelhan.ta4j.TimeSeries;
 import eu.verdelhan.ta4j.indicators.simple.TypicalPriceIndicator;
+import eu.verdelhan.ta4j.indicators.statistics.SimpleLinearRegressionIndicator;
 import eu.verdelhan.ta4j.indicators.statistics.StandardDeviationIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.EMAIndicator;
 import eu.verdelhan.ta4j.indicators.trackers.SMAIndicator;
@@ -42,6 +44,10 @@ public class SDScalp extends AbstractJob {
     BollingerBandsMiddleIndicator middleBBand;
     BollingerBandsLowerIndicator lowBBand;
     BollingerBandsUpperIndicator upBBand;
+
+    // Regression
+    SimpleLinearRegressionIndicator fastSLR;
+    SimpleLinearRegressionIndicator midSLR;
     // Constants
     private int MAX_TICK_COUNT = 1000;
 
@@ -64,6 +70,15 @@ public class SDScalp extends AbstractJob {
         //log out the moving averages for now
         if(oneMinuteES.getTickCount() > 0) {
             log("The thirty minute fast SMA is "+ thirtyMinuteFastSMA.getValue(oneMinuteES.getTickCount()-1).toString());
+            log("The linear regression of the series is "+fastSLR.getValue(oneMinuteES.getTickCount()-1).toString());
+            log(""+Decimal.ZERO);
+            if (oneMinuteES.getTickCount() - 1 > 0){
+                log(""+fastSLR.getValue(1));
+                log(""+Decimal.valueOf(oneMinuteES.getTickCount()-1));
+                log(""+fastSLR.getValue(oneMinuteES.getTickCount()-1));
+                log("The slope of the linear regression is "+getSlope(Decimal.ZERO,fastSLR.getValue(1),Decimal.valueOf(oneMinuteES.getTickCount()-1),fastSLR.getValue(oneMinuteES.getTickCount()-1)));
+
+            }
             log("The low in the current one minute tick is "+ oneMinuteES.getLastTick().getMinPrice());
             log("The high in the current one minute tick is "+ oneMinuteES.getLastTick().getMaxPrice());
         }
@@ -71,6 +86,7 @@ public class SDScalp extends AbstractJob {
             log("The low BBand is "+lowBBand.getValue(tenMinuteES.getTickCount()-1).toString());
             log("The middle BBand is "+middleBBand.getValue(tenMinuteES.getTickCount()-1).toString());
             log("The High BBand is "+upBBand.getValue(tenMinuteES.getTickCount()-1).toString());
+            log("The linear regression of the series is "+midSLR.getValue(tenMinuteES.getTickCount()-1).toString());
             log("The low in the current ten minute tick is "+ tenMinuteES.getLastTick().getMinPrice());
             log("The high in the current ten minute tick is "+ tenMinuteES.getLastTick().getMaxPrice());
         }
@@ -93,10 +109,10 @@ public class SDScalp extends AbstractJob {
     }
     public void loadTimeSeries(){
         // create fast series
-        oneMinuteES = new TimeSeries("my_fast_series", Period.minutes(1));
+        oneMinuteES = new TimeSeries("my_fast_series");
         oneMinuteES.setMaximumTickCount(MAX_TICK_COUNT);
         // create middle series
-        tenMinuteES = new TimeSeries("my_mid_series", Period.minutes(10));
+        tenMinuteES = new TimeSeries("my_mid_series");
         tenMinuteES.setMaximumTickCount(MAX_TICK_COUNT);
     }
     private void loadIndicators(){
@@ -116,7 +132,14 @@ public class SDScalp extends AbstractJob {
             lowBBand = new BollingerBandsLowerIndicator(middleBBand, sdMid12);
             upBBand = new BollingerBandsUpperIndicator(middleBBand, sdMid12);
 
+            fastSLR = new SimpleLinearRegressionIndicator(thirtyMinuteFastSMA, 30);
+            midSLR = new SimpleLinearRegressionIndicator(avgMid12, 12);
+
             indicatorsLoaded=true;
         }
+    }
+    private Decimal getSlope(Decimal xOne, Decimal yOne, Decimal xTwo, Decimal yTwo){
+        Decimal slope = ((yTwo.minus(yOne))).dividedBy((xTwo.minus(xOne)));
+        return slope;
     }
 }
