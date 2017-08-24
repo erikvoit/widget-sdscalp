@@ -9,6 +9,8 @@ import org.joda.time.DateTime;
 import org.joda.time.Instant;
 import org.joda.time.LocalTime;
 
+import java.io.Serializable;
+
 
 /**
  * Created by evoit on 8/1/2017.
@@ -85,13 +87,14 @@ public class MdToTicks extends AbstractJob {
         Tick newTick = createTick();
         // send tick to all interested listeners...
         container.signal(new TickSignal(newTick));
-        //backup Time Series to a DB
+        //add to local series
         series.addTick(newTick);
-        tickDB.put("lastTicks", series);
 
         // log tick so we can see something is happening
         log("~~New Tick Recorded to Time Series~~");
         log("Tick end Time "+series.getLastTick().getEndTime()+" close price "+series.getLastTick().getClosePrice());
+        //backup Time Series to a DB
+        tickDB.put("lastTicks", (Serializable) series);
         // reset Tick variables for next tick
         resetTick();
     }
