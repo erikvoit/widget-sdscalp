@@ -1,65 +1,62 @@
 package common.sdscalp;
 
-import com.optionscity.freeway.api.Order;
-import com.optionscity.freeway.api.Order.HedgeMode;
-import com.optionscity.freeway.api.Order.Side;
 import com.optionscity.freeway.api.Order.TimeInForce;
-import com.optionscity.freeway.api.OrderRequest;
 
 /**
  * Created by evoit on 8/17/2017.
  */
 public class TrackedOrder
 {
-    public final long OrderId;
-    public final String InstId;
-    public final TimeInForce TimeInForce;
+    public final long orderId;
+    public final String instId;
+    public final TimeInForce timeInForce;
     /**
      * 0=Undefined, 1=PendingBooked, 2=PendingCancel, 3=Booked, 4=Filled, 5=Cancelled
      */
-    public int State = 0;
+    public int state = 0;
     /**
      * Original order qty. Positive values represent buy qty; negative values represent sell qty.
      */
-    public int SignedOriginalQty;
+    public int signedOriginalQty;
     /**
      * The order's current "remaining" qty. Positive values represent buy qty; negative values represent sell qty.
      */
-    public int SignedQty;
+    public int signedQty;
     /**
      * Original order price.
      */
-    public final double OriginalPrice;
+    public final double originalPrice;
 
     /**
      * Current order price.
      */
-    public double Price;
+    public double price;
 
     /**
      *
      * @param signedQty Positive values represent buy qty; negative values represent sell qty.
      */
+
     public TrackedOrder(long orderId, String instId, TimeInForce timeInForce, int signedQty,
                         double origPrice)
     {
-        this.OrderId = orderId;
-        this.InstId = instId;
-        this.TimeInForce = timeInForce;
-        this.State = 1;
-        this.SignedOriginalQty = signedQty;
-        this.SignedQty = signedQty;
-        this.OriginalPrice = origPrice;
-        this.Price = origPrice;
+        this.orderId = orderId;
+        this.instId = instId;
+        this.timeInForce = timeInForce;
+        this.state = 1;
+        this.signedOriginalQty = signedQty;
+        this.signedQty = signedQty;
+        this.originalPrice = origPrice;
+        this.price = origPrice;
     }
 
     public boolean IsActive()
     {
-        return (this.State == 3 || this.State == 1);
+        return (this.state == 3 || this.state == 1);
     }
 
     public boolean isLive()
     {
-        return (this.State == 0 || this.State == 1 || this.State == 2 || this.State == 3);
+        return (this.state == 0 || this.state == 1 || this.state == 2 || this.state == 3);
     }
 }

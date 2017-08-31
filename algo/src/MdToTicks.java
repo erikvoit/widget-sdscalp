@@ -41,6 +41,7 @@ public class MdToTicks extends AbstractJob {
     private double closePrice = 0;
     private double volume = 0;
     TimeSeries series;
+    Tick newTick;
 
     private String startTime;
     private String endTime;
@@ -48,6 +49,8 @@ public class MdToTicks extends AbstractJob {
     // Constants
     private int MAX_TICK_COUNT = 1000;
     private TimeInterval timeInterval;
+    private int currentCycle = 0;
+    private int TIME_CYCLE;
 
     @Override
     public void install(IJobSetup setup) {
@@ -56,7 +59,8 @@ public class MdToTicks extends AbstractJob {
         setup.addVariable("Start Time", "Time after which the job can run; in hh:mm (in server time zone)", "String", "");
         setup.addVariable("End Time", "Time after which job stops; in hh:mm (in server time zone)", "String", "");
         setup.addVariable("Market Open Time", "Round first interval to this time in hh:mm", "String", "17:00");
-        setup.addVariable("Bar Timer", "Duration of a bar/tick in seconds", "int", "60");
+        setup.addVariable("Bar Timer", "Duration of a bar/tick in seconds", "int", "300"); // doesnt actually do anything yet use timer instead
+        setup.addVariable("Time Cycle", "Number of onTimer cycles in a full bar. Use 0 to only send full tick bars", "int", "10");
         setup.addVariable("useLast", "Use last trade prices to construct tick", "boolean", "true");
         setup.addVariable("useTop", "Use top of book prices to construct tick", "boolean", "false");
 
@@ -78,25 +82,26 @@ public class MdToTicks extends AbstractJob {
      * creates a new tick (bar) every cycle and sends to interested listeners
      */
     public void onTimer(){
-        // use mid market to generate close price of bar.  If no mid market is available use last price.
-        closePrice=getCleanMidMarketPrice(instrumentId);
-        if (Double.isNaN(closePrice)){
+        closePrice=getCleanMidMarketPrice(instrumentId); // use mid market to generate close price of bar.
+        if (Double.isNaN(closePrice)){ // If no mid market is available use last price.
             closePrice=instruments().getMarketPrices(instrumentId).last;
         }
-        // create Tick
-        Tick newTick = createTick();
-        // send tick to all interested listeners...
-        container.signal(new TickSignal(newTick));
-        //add to local series
-        series.addTick(newTick);
+        this.newTick = createTick();
+        // send partial tick signal
+        if (this.currentCycle < this.TIME_CYCLE-1) {
+            container.signal(new TickSignal(newTick, true)); // send tick to all interested listeners...
+            currentCycle++;
+        } else { // else send full bar tick signal
+            container.signal(new TickSignal(newTick, false)); // Send a full bar signal
+            series.addTick(newTick); //add to local series
 
-        // log tick so we can see something is happening
-        log("~~New Tick Recorded to Time Series~~");
-        log("Tick end Time "+series.getLastTick().getEndTime()+" close price "+series.getLastTick().getClosePrice());
-        //backup Time Series to a DB
-        tickDB.put("lastTicks", (Serializable) series);
-        // reset Tick variables for next tick
-        resetTick();
+            log("~~New Tick Recorded to Time Series~~"); // log tick so we can see something is happening
+            log("Tick end Time "+series.getLastTick().getEndTime()+" close price "+series.getLastTick().getClosePrice());
+
+            tickDB.put("lastTicks", (Serializable) series); // backup Time Series to a DB
+            resetTick(); // reset Tick variables for next tick
+            this.currentCycle = 0; // reset the onTimer counter to send partial ticks
+        }
     }
     /**
      * logs market last, totals volume for Tick, sets high and low prices if useLast
@@ -165,6 +170,7 @@ public class MdToTicks extends AbstractJob {
         useTop=getBooleanVar("useTop");
 
         //timer stuff
+        TIME_CYCLE = getIntVar("Time Cycle");
         barTimer=getIntVar("Bar Timer");
         marketOpenTime=LocalTime.parse(getStringVar("Market Open Time"));
         //subscribe to Messages

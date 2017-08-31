@@ -14,17 +14,37 @@ import static com.optionscity.freeway.api.helpers.Pricing.findClosestPriceDown;
 import static com.optionscity.freeway.api.helpers.Pricing.findClosestPriceUp;
 
 /**
- * Created by evoit on 8/9/2017.
- *
+ * Created by evoit on 8/29/2017.
  */
-public class MomentumTrader extends AbstractJob {
-    String jobId;
-    String instrumentId;
+public class SirTradesALot extends AbstractJob {
+
+    // Job defined Class variables
+    private int baseTradeSize;
+    private double minBandwidth;
+    private String jobId;
+    private String instrumentId;
+    private double stopDistance;
+    /**
+     * 0=Minimal, 1=Basic, 2=Full, 3=Debug
+     */
+    private int verbosity = 0;
+
+    // Order Tracking
+    private Map<Long, TrackedOrder> orderMap;
+    private Map<Long, List<TradeMessage>> _tradeMessagesByParentOrderId;
 
     // Local position tracking variables
-    int netPosition = 0;
-    int tradeCount = 0;
-    double pnl = 0;
+    private int netPosition = 0;
+    private int tradeCount = 0;
+    private double pnl = 0;
+    private long currentStop; // orderId of the currently active stop order
+
+    // Control variables
+    private boolean bandsInitialized = false;
+    private double pivotPrice = 0;
+    private double trailingTarget = 0;
+    private boolean sellStopPending = false;
+    private boolean buyStopPending = false;
 
     // Time series variables
     private double fastLowerBand;
@@ -38,82 +58,67 @@ public class MomentumTrader extends AbstractJob {
     private double fastUpperBand3k;
     private double bandWidth;
 
-    // Control variables
-    private boolean bandsInitialized = false;
-    boolean clearToTrade; // Don't enter new orders if certain market conditions perhaps bid ask spread or missing side?
-    private long currentStop = 0; //The orderId of the current profit target
-    private long currentTarget = 0; //The orderId of the current profit target
-    double lastTick; //The last tick at the time the order was placed for trailing a stop
-    boolean buyStopPending = false;
-    boolean sellStopPending = false;
-    /**
-     * 0=Undefined, 1=Above EMA, 2=Above 1K, 3=Above 2K, -1 Below EMA, -2=Below 1K, -3 Below 2K
-     */
-    int lastZone = 0;
-    int thisZone = 0;
-
-    // Job defined Class variables
-    int baseTradeSize;
-    double minBandwidth;
-    /**
-     * 0=Minimal, 1=Basic, 2=Full, 3=Debug
-     */
-    private int verbosity = 0;
-
-    // Order Tracking
-    private Map<Long, TrackedOrder> orderMap;
-    private Map<Long, List<TradeMessage>> _tradeMessagesByParentOrderId;
-
     @Override
-    public void install(IJobSetup setup) {
+    public void install(IJobSetup setup)
+    {
         setup.addVariable("verbosity", "log detail level: 0=Minimal, 1=Basic, 2=Full, 3=Debug", "int", "2");
         setup.addVariable("Instrument", "Instrument to process live tick data for", "instrumentId", "ES-20170915-F");
         setup.addVariable("Base Trade Size", "Default trade size for this job", "int", "1");
         setup.addVariable("Min Bandwidth Threshold", "Minimum bandwidth to switch from profit target to trailing stop", "double", "2.5");
+        setup.addVariable("Trail Distance", "Distance to trail a stop behind the pivot", "double", ".5");
     }
     @Override
-    public void begin(IContainer container) {
+    public void begin(IContainer container)
+    {
         super.begin(container);
         initialize();
-    }
-    public void onTimer(){
-        if (tradeCount == 0){
-            initialPosition();
-        }
     }
     /**
      * Subscribe to event listeners
      * assign class variables
      */
-    private void initialize(){
+    private void initialize()
+    {
         jobId = container.getMyJobId();
         container.subscribeToSignals();
         container.subscribeToTradeMessages();
         instrumentId=container.getVariable("Instrument");
         baseTradeSize=getIntVar("Base Trade Size");
         minBandwidth=getDoubleVar("Min Bandwidth Threshold");
+        stopDistance=getDoubleVar("Trail Distance");
         verbosity=getIntVar("verbosity");
         container.filterMarketMessages(instrumentId);
         this.orderMap = new HashMap<Long, TrackedOrder>(100);
         this._tradeMessagesByParentOrderId = new HashMap<Long, List<TradeMessage>>(200);
     }
-    /**
-     * Process onTrade events
-     */
-    public void onTrade(TradeMessage m){
-        if (jobId.equals(m.jobId)) {
+    public void onTimer()
+    {
+        if (tradeCount == 0){
+            initialPosition();
+        }
+    }
+    public void onTrade(TradeMessage m)
+    {
+       /*
+       if (jobId.equals(m.jobId)) {
+
             if (m.side == Order.Side.SELL) {
-                netPosition-=m.quantity;
-                tradeCount+=m.quantity;
+                this.netPosition-=m.quantity;
+                this.tradeCount+=m.quantity;
+                log("onTrade: Order "+m.orderQuoteId+" Sold "+m.quantity+ " at "+m.price);
             }
             else {
-                netPosition+=m.quantity;
-                tradeCount+=m.quantity;
+                this.netPosition+=m.quantity;
+                this.tradeCount+=m.quantity;
+                log("onTrade: Order "+m.orderQuoteId+" bought "+m.quantity+ " at "+m.price);
             }
+            log("onTrade: The net position is now "+this.netPosition);
+            log("onTrade: The job has traded "+this.tradeCount+" times.");
         }
-        log("Processed new trade message. The net position is "+netPosition);
+       */
     }
-    public void onOrder(OrderMessage m) {
+    public void onOrder(OrderMessage m)
+    {
         try
         {
             if (m == null)
@@ -146,33 +151,35 @@ public class MomentumTrader extends AbstractJob {
                     // NOTE: we don't remove cxled orders that were partially filled from the map because they
                     // may have an auto hedge response still pending
                     //if (Math.abs(to.signedOriginalQty) == qty)
-                        //this.orderMap.remove(orderId);
+                    //this.orderMap.remove(orderId);
 
                     if (to.instId != null)
                     {
-                        if (priorState != 2 && (priorState != 4 || priorState != 5)) {
+                        if (priorState != 2)
+                        {
                             // this shouldn't happen other than manual user interference or some other rare cases
                             if (this.verbosity > 0)
                                 log("warning: unexpected order status (" + status.toString() + ") received for order (" + orderId + "); assuming user manual cancellation");
 
+                            if (orderId == currentStop)
+                            { //if user cancels the current stop/target reset the trading logic
+                                this.currentStop = 0;
+                            }
                             to = null;
                         }
                     }
                 }
                 //TODO work on this stop pending logic...
-                if (buyStopPending){
-                    Prices prices = instruments().getMarketPrices(this.instrumentId);
-                    double newPrice = to.originalPrice + (prices.bid - lastTick);
-                    this.currentStop = submitOrder(OrderRequest.stopMarketOrder(this.instrumentId, Order.Side.SELL, this.baseTradeSize * 2, newPrice), newPrice);
-                    this.lastTick = prices.bid;
-                    buyStopPending=false;
-                }
-                if (sellStopPending){
-                    Prices prices = instruments().getMarketPrices(this.instrumentId);
-                    double newPrice = to.originalPrice - (prices.ask + this.lastTick);
-                    this.currentStop = submitOrder(OrderRequest.stopMarketOrder(instrumentId, Order.Side.BUY, this.baseTradeSize * 2, newPrice), newPrice);
-                    this.lastTick = prices.ask;
-                    sellStopPending=false;
+                if (orderId == currentStop){
+                    if (buyStopPending)
+                    {
+                        buyStopPending=false;
+                    } else if (sellStopPending)
+                    {
+                        sellStopPending=false;
+                    }
+                    log("onOrder: Stop Order "+currentStop+" successfully canceled.");
+                    this.currentStop = 0;
                 }
             }
             else if (status == Order.Status.FILLED || status == Order.Status.PARTIAL)
@@ -183,10 +190,7 @@ public class MomentumTrader extends AbstractJob {
                     Order ord = null;
                     // NOTE: if prior state = 2 (PendingCancel), then we got filled while attempting to cancel
                     int priorState = to.state;
-                    if (priorState == 2){
-                        this.sellStopPending = false;
-                        this.buyStopPending = false;
-                    }
+
                     // NOTE: 'qty' will contain the abs(incrementally filled qty), and 'signedQty' will
                     // contain the signed incrementally filled qty
                     int qty = 0, signedQty = 0;
@@ -199,9 +203,21 @@ public class MomentumTrader extends AbstractJob {
                         to.signedQty = 0;
                         to.state = 4;
                         // NOTE: leave in order map because auto hedge response may be pending
-
-
-                        oco(to.orderId); // If this was part of an OCO cancel the other side
+                        if (to.signedOriginalQty < 0)
+                        {
+                            this.netPosition+=to.signedOriginalQty;
+                            this.tradeCount+=Math.abs(to.signedOriginalQty);
+                            log("onOrder: Order "+to.orderId +" Sold "+to.signedOriginalQty + " at "+to.price);
+                        }
+                        else
+                        {
+                            this.netPosition+=to.signedOriginalQty;
+                            this.tradeCount+=to.signedOriginalQty;
+                            log("onOrder: Order "+to.orderId +" bought "+to.signedOriginalQty + " at "+to.price);
+                        }
+                        log("onOrder: The net position is now "+this.netPosition);
+                        log("onOrder: The job has traded "+this.tradeCount+" times.");
+                        this.currentStop = 0;
 
                     }
                     else
@@ -249,97 +265,96 @@ public class MomentumTrader extends AbstractJob {
         catch (Exception e)
         {
             log("error: an exception occurred in onOrder():");
-            this.LogException(e);
+            this.logException(e);
         }
     }
-    public void onMarketBidAsk(MarketBidAskMessage m){
-        if (this.tradeCount >= this.baseTradeSize){ // Note: If this is not true we haven't taken an initial position so don't do anything
-            Prices prices = instruments().getMarketPrices(m.instrumentId);
-            getZone(prices);  // determine what zone the current price update is in
-            // TODO build logic for trading narrow bandwidth first we will just take a position and reverse on crossing back over the upper band etc...
-            // after this is working we will define a separate strategy for when the bands are wider.  This will use a trailing stop to catch the bigger swing moves.
-            //if (bandWidth < minBandwidth) {
-                if (!isLive(this.currentStop)){
-                    if (this.netPosition > 0){ // we are long so looking for the upper band...
-                        switch (this.thisZone){
-                            case 1:
-                                break;
-                            case 2:
-                                break;
-                            case 3:
-                                break;
-                            case 4:{
-                                double initialStopPrice = findClosestPriceDown(this.instrumentId, this.fastUpperBand);
-                                this.currentStop = submitOrder(OrderRequest.stopMarketOrder(this.instrumentId, Order.Side.SELL, this.baseTradeSize * 2, initialStopPrice), initialStopPrice);
-                                double initialTargetPrice = findClosestPriceUp(this.instrumentId, this.fastUpperBand3k);
-                                this.currentTarget = submitOrder(OrderRequest.sell(this.instrumentId,this.baseTradeSize *2,initialTargetPrice), initialTargetPrice);
-                                this.lastTick = prices.bid;
-                                break;
-                            }
-                            case -1:
-                                break;
-                            case -2:{
-                                if (lastZone >= -1) {
-                                    double initialStopPrice = findClosestPriceDown(this.instrumentId, this.fastLowerBand1k);
-                                    this.currentStop = submitOrder(OrderRequest.stopMarketOrder(instrumentId, Order.Side.SELL, this.baseTradeSize * 2, initialStopPrice), initialStopPrice);
-                                }
-                                break;
-                            }
-                            default:
-                                break;
-                        }
-                    }else { // Note: Else net position is less than 1
-                        // we a short so targeting the lower band
-                        switch (thisZone){
-                            case -1:
-                                break;
-                            case -2:
-                                break;
-                            case -3:
-                                break;
-                            case -4:{
-                                double initialStopPrice = findClosestPriceUp(this.instrumentId, this.fastLowerBand);
-                                this.currentStop = submitOrder(OrderRequest.stopMarketOrder(instrumentId, Order.Side.BUY, this.baseTradeSize * 2, initialStopPrice), initialStopPrice);
-                                double initialTargetPrice = findClosestPriceDown(this.instrumentId, this.fastLowerBand3k);
-                                this.currentTarget = submitOrder(OrderRequest.buy(this.instrumentId,this.baseTradeSize *2,initialTargetPrice), initialTargetPrice);
-                                this.lastTick = prices.ask;
-                                break;
-                            }
-                            case 1:
-                                break;
-                            case 2:{
-                                if (lastZone <=1){
-                                        double initialStopPrice = findClosestPriceUp(this.instrumentId, this.fastUpperBand1k);
-                                        this.currentStop = submitOrder(OrderRequest.stopMarketOrder(this.instrumentId, Order.Side.BUY, this.baseTradeSize * 2, initialStopPrice), initialStopPrice);
-                                }
-                                break;
-                            }
-                            default:
-                                break;
-                        }
-                    }
+    public void onMarketBidAsk(MarketBidAskMessage m)
+    {
+        Prices prices = instruments().getMarketPrices(m.instrumentId);
+        if (this.tradeCount >= this.baseTradeSize)
+        { // Note: If this is not true we haven't taken an initial position so don't do anything
+            if (this.currentStop == 0) // there is no stop order placed
+            {
+                if (this.netPosition > 0)
+                { // we are long
+                    if (prices.bid > this.pivotPrice)
+                    {
+                        this.pivotPrice = prices.bid;
+                        this.trailingTarget = this.pivotPrice - this.stopDistance;
+                        log ("onMarketBidAsk: New pivot price is "+pivotPrice+ " the trailing target is "+trailingTarget);
+                    } else if (prices.bid <= trailingTarget)
+                    {
+                        this.currentStop = submitOrder(OrderRequest.stopMarketOrder(this.instrumentId, Order.Side.SELL, this.baseTradeSize * 2, this.trailingTarget), this.trailingTarget);
+                        log("onMarketBidAsk: Bid is below the trailing target price. Net position is "+this.netPosition+" placing "+this.baseTradeSize*2+" lot stop order "+this.currentStop+" at price "+this.trailingTarget+".");
 
-                } else { // if isLive(currentTarget)
-                    // Logic to manage open order...
-                    TrackedOrder toStop = this.orderMap.get(this.currentStop); // get the order to trail
-                    if (this.netPosition > 0){ // we are long
-                        if (prices.bid > this.lastTick){ // trailing stop logic
-                            cancelOrder(currentStop);
-                            this.sellStopPending = true;
-                            // new currentStop placed in onOrder()
-                        }
-                    } else { //we are short
-                        if (prices.ask < lastTick){ // trailing stop logic
-                            cancelOrder(this.currentStop);
-                            this.buyStopPending = true;
-                        }
+                    }
+                }else if (this.netPosition < 0)
+                { // Note: Else net position is less than 1
+                    if (prices.ask < pivotPrice)
+                    {
+                        this.pivotPrice = prices.ask;
+                        this.trailingTarget = this.pivotPrice + this.stopDistance;
+                        log ("onMarketBidAsk: New pivot price is "+pivotPrice+ " the trailing target is "+trailingTarget);
+                    } else if (prices.ask >= trailingTarget)
+                    {
+                        log("onMarketBidAsk: Ask is above the trailing target price. Net position is "+this.netPosition+" placing "+this.baseTradeSize*2+" lot stop order "+this.currentStop+" at price "+this.trailingTarget+".");
+                        this.currentStop = submitOrder(OrderRequest.stopMarketOrder(instrumentId, Order.Side.BUY, this.baseTradeSize * 2, this.trailingTarget), this.trailingTarget);
                     }
                 }
-            //}
+            } else
+            { // trail the stop
+                if (this.netPosition > 0)
+                { // we are long
+                    if (prices.bid > this.pivotPrice)
+                    { // trailing stop logic
+                        cancelOrder(currentStop);
+                        this.sellStopPending = true;
+                        this.pivotPrice = prices.bid;
+                        this.trailingTarget = this.pivotPrice - this.stopDistance;
+                        log ("onMarketBidAsk: New pivot price is "+pivotPrice+ " the trailing target is "+trailingTarget);
+                    }
+                } else if (this.netPosition < 0)
+                { //we are short
+                    if (prices.ask < this.pivotPrice)
+                    { // trailing stop logic
+                        cancelOrder(this.currentStop);
+                        this.buyStopPending = true;
+                        this.pivotPrice = prices.ask;
+                        this.trailingTarget = this.pivotPrice + this.stopDistance;
+                        log ("onMarketBidAsk: New pivot price is "+pivotPrice+ " the trailing target is "+trailingTarget);
+                    }
+                }
+            }
         }
     }
-    public void onSignal(BollingerBandSignal bbSignal){
-        log("Received an update to the Bollinger bands. The new low band is "+bbSignal.lowerBand + " the new middle band is "+bbSignal.middleBand +" The upper band is "+bbSignal.upperBand);
+    /**
+     * Take an initial position
+     */
+    private void initialPosition()
+    {
+        if (bandsInitialized)
+        {
+            double midMarket = getCleanMidMarketPrice(instrumentId);
+            long initialPosition = 0;
+            if (midMarket >= fastMiddleBand)
+            {
+                initialPosition = submitOrder(OrderRequest.buy(instrumentId, baseTradeSize), Double.NaN);
+                pivotPrice = findClosestPriceDown(instrumentId, midMarket);
+                trailingTarget = pivotPrice - stopDistance;
+                log("Initial position opened. Pivot is "+this.pivotPrice+" the trailing target is now "+trailingTarget);
+            }else
+            {
+                initialPosition =submitOrder(OrderRequest.sell(instrumentId, baseTradeSize), Double.NaN);
+                pivotPrice = findClosestPriceUp(instrumentId, midMarket);
+                trailingTarget = pivotPrice + stopDistance;
+                log("Initial position opened. Pivot is "+this.pivotPrice+" the trailing target is now "+trailingTarget);
+            }
+        }
+    }
+    // helper methods
+    public void onSignal(BollingerBandSignal bbSignal)
+    {
+        //log("Received an update to the Bollinger bands. The new low band is "+bbSignal.lowerBand + " the new middle band is "+bbSignal.middleBand +" The upper band is "+bbSignal.upperBand);
         this.fastLowerBand=bbSignal.lowerBand;
         this.fastMiddleBand=bbSignal.middleBand;
         this.fastUpperBand=bbSignal.upperBand;
@@ -354,21 +369,8 @@ public class MomentumTrader extends AbstractJob {
             bandsInitialized = true;
         }
     }
-    /**
-     * Take an initial position
-     */
-    public void initialPosition(){
-        if (bandsInitialized){
-            double midMarket = getCleanMidMarketPrice(instrumentId);
-            if (midMarket >= fastMiddleBand) {
-                submitOrder(OrderRequest.buy(instrumentId, baseTradeSize), Double.NaN);
-            }else {
-                submitOrder(OrderRequest.sell(instrumentId, baseTradeSize), Double.NaN);
-            }
-        }
-    }
-    private long submitOrder(OrderRequest order, double initialPrice) {
-        log("Net position is "+netPosition+" current zone is "+thisZone+" last zone is "+lastZone+" placing new order");
+    private long submitOrder(OrderRequest order, double initialPrice)
+    {
         long orderId = -1;
         int signedQty = order.side.multiplier() * order.quantity;
         // submit new order to exchange
@@ -447,14 +449,14 @@ public class MomentumTrader extends AbstractJob {
                     {
                         // see if only a price re-sync is necessary
                         int actualRemainingQty = Math.max(ordSync.orderQuantity - ordSync.filledQuantity, 0);
-                        if (actualRemainingQty == Math.abs(to.signedQty) && !EqualsWithinTolerance(to.price, ordSync.orderPrice, 0.000001) && ordSync.orderPrice > 0)
+                        if (actualRemainingQty == Math.abs(to.signedQty) && !equalsWithinTolerance(to.price, ordSync.orderPrice, 0.000001) && ordSync.orderPrice > 0)
                             to.price = ordSync.orderPrice;
                         else if (this.verbosity > 2)
                         {
                             if (changeOrderQty)
-                                log("warning: order (" + orderId + ") failed to be modified to new 'remaining' qty " + newSignedQty + " @ " + FormatVariableFine(price));
+                                log("warning: order (" + orderId + ") failed to be modified to new 'remaining' qty " + newSignedQty + " @ " + formatVariableFine(price));
                             else
-                                log("warning: order (" + orderId + ") failed to be modified to new price " + FormatVariableFine(price));
+                                log("warning: order (" + orderId + ") failed to be modified to new price " + formatVariableFine(price));
                         }
                     }
                 }
@@ -470,9 +472,9 @@ public class MomentumTrader extends AbstractJob {
                     if (this.verbosity > 2)
                     {
                         if (changeOrderQty)
-                            log("warning: order (" + orderId + ") failed to be modified to new 'remaining' qty " + newSignedQty + " @ " + FormatVariableFine(price));
+                            log("warning: order (" + orderId + ") failed to be modified to new 'remaining' qty " + newSignedQty + " @ " + formatVariableFine(price));
                         else
-                            log("warning: order (" + orderId + ") failed to be modified to new price " + FormatVariableFine(price));
+                            log("warning: order (" + orderId + ") failed to be modified to new price " + formatVariableFine(price));
                         log("warning: order (" + orderId + ") is no longer listed as active; order has likely just been filled");
                     }
                 }
@@ -493,17 +495,16 @@ public class MomentumTrader extends AbstractJob {
         if (this.orderMap.containsKey(orderId))
             this.orderMap.get(orderId).state = 2;
     }
-    // helper methods
-    public static String FormatVariableFine(double dbl)
+    public static String formatVariableFine(double dbl)
     {
         DecimalFormat dF = new DecimalFormat("0.0####");
         return (dF.format(dbl));
     }
-    private static boolean EqualsWithinTolerance(double a, double b, double tolerance)
+    private static boolean equalsWithinTolerance(double a, double b, double tolerance)
     {
         return (Math.abs(a - b) < tolerance);
     }
-    private void LogException(Exception e)
+    private void logException(Exception e)
     {
         if (e.getMessage() != null)
             log(e.getMessage());
@@ -512,9 +513,11 @@ public class MomentumTrader extends AbstractJob {
             log(ste.toString());
         }
     }
-    private double getCleanMidMarketPrice(String instrumentId) {
+    private double getCleanMidMarketPrice(String instrumentId)
+    {
         Prices topOfBook = instruments().getTopOfBook(instrumentId);
-        if (topOfBook.ask_size == 0 && topOfBook.bid_size == 0) {
+        if (topOfBook.ask_size == 0 && topOfBook.bid_size == 0)
+        {
             return Double.NaN;
         } else if (topOfBook.ask_size == 0) {
             return topOfBook.bid;
@@ -525,58 +528,14 @@ public class MomentumTrader extends AbstractJob {
         }
     }
     /**
-     * @param zone is the zone we are in now
-     */
-    private void setZone(int zone){
-        if (zone != thisZone) {
-            lastZone = thisZone;
-            thisZone = zone;
-            if (this.verbosity >= 2){
-                log("New zone: "+thisZone+" last zone: "+lastZone);
-            }
-        }
-    }
-    private void getZone(Prices p){
-        if (p.bid > this.fastUpperBand3k){
-            setZone(5);
-        } else if (p.bid > this.fastUpperBand && p.bid < this.fastUpperBand3k){
-            setZone(4);
-        } else if (p.bid > this.fastUpperBand1k && p.bid < this.fastUpperBand){
-            setZone(3);
-        } else if (p.bid > this.fastUpperBandHk && p.bid < this.fastUpperBand1k) {
-            setZone(2);
-        } else if (p.bid > this.fastMiddleBand && p.bid < this.fastUpperBandHk){
-            setZone(1);
-        } else if (p.ask < fastMiddleBand && p.ask > this.fastLowerBandHk) {
-            setZone(-1);
-        } else if (p.ask < fastLowerBandHk && p.ask > this.fastLowerBand1k) {
-            setZone(-2);
-        }else if (p.ask < fastLowerBand1k && p.ask > this.fastLowerBand) {
-            setZone(-3);
-        } else if (p.ask < this.fastLowerBand && p.ask > this.fastLowerBand3k) {
-            setZone(-4);
-        } else if (p.ask < fastLowerBand3k) {
-            setZone(-5);
-        }
-    }
-    /**
      * @param orderId returns true if this order Id is in the map
      */
-    private boolean isLive(long orderId){
+    private boolean isLive(long orderId)
+    {
         if (orderMap.containsKey(orderId)){
             return orderMap.get(orderId).isLive();
         } else {
             return false;
         }
-    }
-    private boolean oco(long orderId){
-        if (orderId == this.currentStop){
-            cancelOrder(this.currentTarget);
-            return true;
-        }
-        if (orderId == this.currentTarget){
-            cancelOrder(this.currentTarget);
-            return true;
-        } else return false;
     }
 }

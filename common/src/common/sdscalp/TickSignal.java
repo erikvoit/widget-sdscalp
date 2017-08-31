@@ -8,8 +8,10 @@ import eu.verdelhan.ta4j.Tick;
  */
 public class TickSignal extends Signal {
     public final Tick tick;
+    public final boolean partial;
 
-    public TickSignal(Tick tick) {
+    public TickSignal(Tick tick, boolean partial) {
         this.tick = tick;
+        this.partial = partial;
     }
 }
