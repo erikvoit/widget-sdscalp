@@ -52,6 +52,7 @@ public class MdToCsv extends AbstractJob {
     @Override
     public void begin(IContainer container) {
         super.begin(container);
+
         recLast = getBooleanVar("RecordLast");
         recDepth = getBooleanVar("RecordDepth");
         writeToFile = getBooleanVar("WriteToFile");
